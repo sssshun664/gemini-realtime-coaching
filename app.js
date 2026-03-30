@@ -144,6 +144,11 @@
       return;
     }
 
+    // Step 3: Start sending camera frames to Gemini
+    video.startFrameCapture((base64Jpeg) => {
+      gemini.sendVideo(base64Jpeg);
+    }, 1000); // Send 1 frame per second
+
     isSessionActive = true;
     micBtn.disabled = false;
     micBtn.classList.add('active');
@@ -152,6 +157,7 @@
   }
 
   function stopSession() {
+    video.stopFrameCapture();
     gemini.disconnect();
     audio.stopMic();
     audio.clearPlayback();

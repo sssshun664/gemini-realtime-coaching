@@ -3,7 +3,7 @@
  *
  * Handles:
  * - WebSocket connection with config message
- * - Sending realtime audio/text input
+ * - Sending realtime audio/video/text input
  * - Receiving audio output, transcriptions, tool calls
  * - Sending tool responses
  */
@@ -50,7 +50,7 @@ class GeminiLive {
     this._setStatus('connecting');
 
     const MODEL = 'gemini-3.1-flash-live-preview';
-    const WS_URL = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+    const WS_URL = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
 
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -78,35 +78,16 @@ class GeminiLive {
       }
 
       this._ws.onopen = () => {
-        console.log('[GeminiLive] WebSocket connected, sending setup...');
+        console.log('[GeminiLive] WebSocket connected, sending config...');
 
-        // Send setup message (raw WebSocket protocol)
-        const setupMessage = {
-          setup: {
+        // Send config message (raw WebSocket protocol)
+        const configMessage = {
+          config: {
             model: `models/${MODEL}`,
-            generationConfig: {
-              responseModalities: ['AUDIO']
-            },
+            responseModalities: ['AUDIO'],
             systemInstruction: {
               parts: [{
-                text: `あなたはプロのフィットネスコーチです。ジムでトレーニングしているユーザーに対して、リアルタイムで音声コーチングを行います。
-
-役割:
-- ユーザーのトレーニングをサポートする親しみやすいコーチ
-- 会話はすべて日本語で行う
-- 簡潔で明確な指示を出す（ユーザーはトレーニング中なので長い説明は避ける）
-- 安全性を最優先に考える
-
-機能:
-- ユーザーが種目名を言ったら set_exercise 関数を呼び出して種目を設定する
-- ユーザーが「録画して」「撮影開始」と言ったら start_recording 関数を呼び出す
-- ユーザーが「終わり」「録画止めて」と言ったら stop_recording 関数を呼び出す
-- ユーザーが「解析して」「フォームチェック」と言ったら analyze_form 関数を呼び出す
-
-重要:
-- 関数を呼び出した際は「○○の関数を呼び出しました！」と明確に報告してください
-- 解析結果を受け取ったら、データに基づいて具体的なフォーム改善アドバイスを音声で伝えてください
-- スコアや数値も含めてわかりやすく説明してください`
+                text: SYSTEM_INSTRUCTION
               }]
             },
             tools: TOOL_DEFINITIONS,
@@ -115,8 +96,8 @@ class GeminiLive {
           }
         };
 
-        this._ws.send(JSON.stringify(setupMessage));
-        console.log('[GeminiLive] Setup message sent, waiting for setupComplete...');
+        this._ws.send(JSON.stringify(configMessage));
+        console.log('[GeminiLive] Config sent, waiting for setupComplete...');
       };
 
       this._ws.onmessage = async (event) => {
@@ -277,6 +258,26 @@ class GeminiLive {
         audio: {
           data: base64Data,
           mimeType: 'audio/pcm;rate=16000'
+        }
+      }
+    };
+
+    this._ws.send(JSON.stringify(message));
+  }
+
+  /**
+   * Send video frame to Gemini
+   * @param {string} base64Data - Base64 encoded JPEG image data
+   * @param {string} mimeType - MIME type (default: image/jpeg)
+   */
+  sendVideo(base64Data, mimeType = 'image/jpeg') {
+    if (!this._isConnected || !this._ws) return;
+
+    const message = {
+      realtimeInput: {
+        video: {
+          data: base64Data,
+          mimeType: mimeType
         }
       }
     };

@@ -9,6 +9,9 @@ class VideoRecorder {
     this._chunks = [];
     this._isRecording = false;
     this._previewEl = null;
+    this._captureCanvas = null;
+    this._captureCtx = null;
+    this._frameInterval = null;
   }
 
   /**
@@ -135,7 +138,64 @@ class VideoRecorder {
     URL.revokeObjectURL(url);
   }
 
+  /**
+   * Start periodic frame capture and send to callback
+   * @param {Function} onFrame - Called with base64 JPEG string for each frame
+   * @param {number} intervalMs - Capture interval in ms (default: 1000)
+   */
+  startFrameCapture(onFrame, intervalMs = 1000) {
+    if (!this._previewEl || !this._stream) return;
+
+    this.stopFrameCapture();
+
+    // Create canvas for frame capture
+    this._captureCanvas = document.createElement('canvas');
+    this._captureCtx = this._captureCanvas.getContext('2d');
+
+    this._frameInterval = setInterval(() => {
+      if (!this._previewEl || this._previewEl.readyState < 2) return;
+
+      // Use smaller resolution to reduce bandwidth
+      const maxWidth = 640;
+      const vw = this._previewEl.videoWidth;
+      const vh = this._previewEl.videoHeight;
+      if (!vw || !vh) return;
+
+      const scale = Math.min(1, maxWidth / vw);
+      this._captureCanvas.width = Math.round(vw * scale);
+      this._captureCanvas.height = Math.round(vh * scale);
+
+      this._captureCtx.drawImage(this._previewEl, 0, 0, this._captureCanvas.width, this._captureCanvas.height);
+
+      // Convert to JPEG base64 (strip data URL prefix)
+      const dataUrl = this._captureCanvas.toDataURL('image/jpeg', 0.6);
+      const base64Data = dataUrl.split(',')[1];
+      if (base64Data) {
+        onFrame(base64Data);
+      }
+    }, intervalMs);
+
+    console.log(`[VideoRecorder] Frame capture started (every ${intervalMs}ms)`);
+  }
+
+  /**
+   * Stop periodic frame capture
+   */
+  stopFrameCapture() {
+    if (this._frameInterval) {
+      clearInterval(this._frameInterval);
+      this._frameInterval = null;
+      console.log('[VideoRecorder] Frame capture stopped');
+    }
+    this._captureCanvas = null;
+    this._captureCtx = null;
+  }
+
   get isRecording() {
     return this._isRecording;
+  }
+
+  get isCapturingFrames() {
+    return this._frameInterval !== null;
   }
 }
