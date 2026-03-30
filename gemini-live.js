@@ -50,7 +50,7 @@ class GeminiLive {
     this._setStatus('connecting');
 
     const MODEL = 'gemini-3.1-flash-live-preview';
-    const WS_URL = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+    const WS_URL = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
 
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -122,9 +122,24 @@ class GeminiLive {
       this._ws.onmessage = (event) => {
         try {
           const response = JSON.parse(event.data);
+          console.log('[GeminiLive] Received:', JSON.stringify(response).substring(0, 200));
+
+          // Handle server error responses
+          if (response.error) {
+            const errMsg = response.error.message || JSON.stringify(response.error);
+            console.error('[GeminiLive] Server error:', errMsg);
+            clearTimeout(timeout);
+            if (!settled) {
+              settled = true;
+              reject(new Error(`API エラー: ${errMsg}`));
+            } else if (this._onError) {
+              this._onError(new Error(`API エラー: ${errMsg}`));
+            }
+            return;
+          }
 
           // Handle setupComplete — resolve the connect promise here
-          if (response.setupComplete) {
+          if (response.setupComplete !== undefined) {
             console.log('[GeminiLive] Setup complete');
             clearTimeout(timeout);
             this._isConfigured = true;
@@ -139,7 +154,7 @@ class GeminiLive {
 
           this._handleMessage(response);
         } catch (err) {
-          console.error('[GeminiLive] Failed to parse message:', err);
+          console.error('[GeminiLive] Failed to parse message:', err, event.data?.substring?.(0, 200));
         }
       };
 
@@ -221,6 +236,17 @@ class GeminiLive {
       if (this._onToolCall) {
         this._onToolCall(response.toolCall);
       }
+      return;
+    }
+
+    // Usage metadata (informational, ignore)
+    if (response.usageMetadata) {
+      return;
+    }
+
+    // Unknown message type
+    if (!response.serverContent && !response.toolCall) {
+      console.warn('[GeminiLive] Unknown message type:', JSON.stringify(response).substring(0, 300));
     }
   }
 
