@@ -3,9 +3,11 @@
  */
 class AudioHandler {
   constructor() {
-    this._audioContext = null;
+    this._micContext = null;
+    this._playbackContext = null;
     this._micStream = null;
     this._workletNode = null;
+    this._scriptNode = null;
     this._onAudioData = null;
 
     // Playback
@@ -16,71 +18,103 @@ class AudioHandler {
   }
 
   /**
-   * Initialize microphone capture with AudioWorklet
+   * Initialize microphone capture
+   * Uses AudioWorklet where supported, falls back to ScriptProcessorNode
    * @param {Function} onAudioData - Callback receiving ArrayBuffer of PCM int16 data
    */
   async startMic(onAudioData) {
     this._onAudioData = onAudioData;
 
     // Request microphone
-    this._micStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        sampleRate: { ideal: 48000 },
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      }
-    });
-
-    this._audioContext = new AudioContext({ sampleRate: 48000 });
-
-    // Load AudioWorklet
-    const workletBlob = new Blob([`
-      class PCMProcessor extends AudioWorkletProcessor {
-        constructor() {
-          super();
-          this._buffer = [];
-          this._bufferSize = 2400;
+    try {
+      this._micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: { ideal: 48000 },
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
         }
-        process(inputs) {
-          const input = inputs[0];
-          if (!input || !input[0]) return true;
-          const channelData = input[0];
-          const ratio = sampleRate / 16000;
-          for (let i = 0; i < channelData.length; i += ratio) {
-            const idx = Math.floor(i);
-            if (idx < channelData.length) {
-              let sample = channelData[idx];
-              sample = Math.max(-1, Math.min(1, sample));
-              this._buffer.push(sample * 32767);
+      });
+    } catch (err) {
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        throw new Error('マイクへのアクセスが拒否されました。ブラウザの設定を確認してください。');
+      } else if (err.name === 'NotFoundError') {
+        throw new Error('マイクが見つかりません。デバイスにマイクが接続されているか確認してください。');
+      }
+      throw new Error(`マイクの初期化に失敗しました: ${err.message}`);
+    }
+
+    try {
+      this._micContext = new AudioContext({ sampleRate: 48000 });
+
+      // iOS Safari requires explicit resume after user gesture
+      if (this._micContext.state === 'suspended') {
+        await this._micContext.resume();
+      }
+
+      const source = this._micContext.createMediaStreamSource(this._micStream);
+
+      // Try AudioWorklet first, fall back to ScriptProcessorNode
+      if (this._micContext.audioWorklet) {
+        try {
+          await this._micContext.audioWorklet.addModule('audio-worklet.js');
+          this._workletNode = new AudioWorkletNode(this._micContext, 'pcm-processor');
+          this._workletNode.port.onmessage = (event) => {
+            if (this._onAudioData) {
+              this._onAudioData(event.data);
             }
-          }
-          if (this._buffer.length >= this._bufferSize) {
-            const pcmData = new Int16Array(this._buffer.splice(0, this._bufferSize));
-            this.port.postMessage(pcmData.buffer, [pcmData.buffer]);
-          }
-          return true;
+          };
+          source.connect(this._workletNode);
+          console.log('[AudioHandler] Mic started with AudioWorklet');
+          return;
+        } catch (workletErr) {
+          console.warn('[AudioHandler] AudioWorklet failed, falling back to ScriptProcessor:', workletErr);
         }
       }
-      registerProcessor('pcm-processor', PCMProcessor);
-    `], { type: 'application/javascript' });
 
-    const workletUrl = URL.createObjectURL(workletBlob);
-    await this._audioContext.audioWorklet.addModule(workletUrl);
-    URL.revokeObjectURL(workletUrl);
+      // Fallback: ScriptProcessorNode (deprecated but widely supported)
+      this._setupScriptProcessor(source);
+      console.log('[AudioHandler] Mic started with ScriptProcessorNode (fallback)');
+    } catch (err) {
+      this.stopMic();
+      throw new Error(`音声処理の初期化に失敗しました: ${err.message}`);
+    }
+  }
 
-    const source = this._audioContext.createMediaStreamSource(this._micStream);
-    this._workletNode = new AudioWorkletNode(this._audioContext, 'pcm-processor');
+  /**
+   * Fallback mic capture using ScriptProcessorNode
+   */
+  _setupScriptProcessor(source) {
+    const bufferSize = 4096;
+    this._scriptNode = this._micContext.createScriptProcessor(bufferSize, 1, 1);
+    let pcmBuffer = [];
+    const targetBufferSize = 2400;
 
-    this._workletNode.port.onmessage = (event) => {
-      if (this._onAudioData) {
-        this._onAudioData(event.data);
+    this._scriptNode.onaudioprocess = (event) => {
+      const channelData = event.inputBuffer.getChannelData(0);
+      const ratio = this._micContext.sampleRate / 16000;
+
+      for (let i = 0; i < channelData.length; i += ratio) {
+        const idx = Math.floor(i);
+        if (idx < channelData.length) {
+          let sample = channelData[idx];
+          sample = Math.max(-1, Math.min(1, sample));
+          pcmBuffer.push(sample * 32767);
+        }
+      }
+
+      if (pcmBuffer.length >= targetBufferSize) {
+        const pcmData = new Int16Array(pcmBuffer.splice(0, targetBufferSize));
+        if (this._onAudioData) {
+          this._onAudioData(pcmData.buffer);
+        }
       }
     };
 
-    source.connect(this._workletNode);
-    // Don't connect to destination (we don't want to hear ourselves)
+    source.connect(this._scriptNode);
+    // ScriptProcessorNode requires connection to destination to fire events
+    this._scriptNode.connect(this._micContext.destination);
   }
 
   /**
@@ -91,13 +125,17 @@ class AudioHandler {
       this._workletNode.disconnect();
       this._workletNode = null;
     }
+    if (this._scriptNode) {
+      this._scriptNode.disconnect();
+      this._scriptNode = null;
+    }
     if (this._micStream) {
       this._micStream.getTracks().forEach(t => t.stop());
       this._micStream = null;
     }
-    if (this._audioContext) {
-      this._audioContext.close();
-      this._audioContext = null;
+    if (this._micContext) {
+      this._micContext.close().catch(() => {});
+      this._micContext = null;
     }
   }
 
@@ -127,9 +165,14 @@ class AudioHandler {
     }
     this._isPlaying = true;
 
-    // Ensure we have an AudioContext for playback
-    if (!this._audioContext || this._audioContext.state === 'closed') {
-      this._audioContext = new AudioContext({ sampleRate: this._playbackSampleRate });
+    // Use a dedicated playback context at 24kHz
+    if (!this._playbackContext || this._playbackContext.state === 'closed') {
+      this._playbackContext = new AudioContext({ sampleRate: this._playbackSampleRate });
+    }
+
+    // Resume if suspended (iOS)
+    if (this._playbackContext.state === 'suspended') {
+      this._playbackContext.resume();
     }
 
     const pcmBuffer = this._playbackQueue.shift();
@@ -140,12 +183,12 @@ class AudioHandler {
       float32Array[i] = int16Array[i] / 32768;
     }
 
-    const audioBuffer = this._audioContext.createBuffer(1, float32Array.length, this._playbackSampleRate);
+    const audioBuffer = this._playbackContext.createBuffer(1, float32Array.length, this._playbackSampleRate);
     audioBuffer.getChannelData(0).set(float32Array);
 
-    this._currentSource = this._audioContext.createBufferSource();
+    this._currentSource = this._playbackContext.createBufferSource();
     this._currentSource.buffer = audioBuffer;
-    this._currentSource.connect(this._audioContext.destination);
+    this._currentSource.connect(this._playbackContext.destination);
     this._currentSource.onended = () => {
       this._currentSource = null;
       this._playNext();
@@ -163,12 +206,5 @@ class AudioHandler {
       this._currentSource = null;
     }
     this._isPlaying = false;
-  }
-
-  /**
-   * Get the mic MediaStream (for video recorder to use same permissions context)
-   */
-  getMicStream() {
-    return this._micStream;
   }
 }

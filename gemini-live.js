@@ -55,9 +55,23 @@ class GeminiLive {
     return new Promise((resolve, reject) => {
       let settled = false;
 
+      // Connection timeout (15 seconds)
+      const timeout = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          if (this._ws) {
+            this._ws.close();
+            this._ws = null;
+          }
+          this._setStatus('disconnected');
+          reject(new Error('接続がタイムアウトしました（15秒）。ネットワーク接続とAPIキーを確認してください。'));
+        }
+      }, 15000);
+
       try {
         this._ws = new WebSocket(WS_URL);
       } catch (err) {
+        clearTimeout(timeout);
         this._setStatus('disconnected');
         reject(err);
         return;
@@ -112,6 +126,7 @@ class GeminiLive {
           // Handle setupComplete — resolve the connect promise here
           if (response.setupComplete) {
             console.log('[GeminiLive] Setup complete');
+            clearTimeout(timeout);
             this._isConfigured = true;
             this._isConnected = true;
             this._setStatus('connected');
@@ -142,6 +157,7 @@ class GeminiLive {
 
         // If closed before setupComplete, reject the connect promise
         if (!settled) {
+          clearTimeout(timeout);
           settled = true;
           const reason = event.reason || `WebSocket closed (code: ${event.code})`;
           reject(new Error(reason));
