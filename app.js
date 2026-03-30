@@ -58,11 +58,20 @@
     gemini.on('inputTranscript', handleInputTranscript);
     gemini.on('outputTranscript', handleOutputTranscript);
     gemini.on('toolCall', handleToolCall);
-    gemini.on('interrupted', () => audio.clearPlayback());
+    gemini.on('interrupted', () => {
+      audio.clearPlayback();
+      finalizeCurrentTranscripts();
+    });
+    gemini.on('turnComplete', () => {
+      finalizeCurrentTranscripts();
+    });
     gemini.on('status', updateConnectionStatus);
     gemini.on('error', (err) => {
       console.error('Gemini error:', err);
-      addSystemMessage('接続エラーが発生しました');
+      addSystemMessage(`エラー: ${err.message || '接続エラーが発生しました'}`);
+      if (isSessionActive) {
+        stopSession();
+      }
     });
   }
 
