@@ -119,10 +119,18 @@ class GeminiLive {
         console.log('[GeminiLive] Setup message sent, waiting for setupComplete...');
       };
 
-      this._ws.onmessage = (event) => {
+      this._ws.onmessage = async (event) => {
         try {
-          const response = JSON.parse(event.data);
-          console.log('[GeminiLive] Received:', JSON.stringify(response).substring(0, 200));
+          // Handle Blob data (Safari sends binary as Blob)
+          let rawData = event.data;
+          if (rawData instanceof Blob) {
+            rawData = await rawData.text();
+          } else if (rawData instanceof ArrayBuffer) {
+            rawData = new TextDecoder().decode(rawData);
+          }
+
+          const response = JSON.parse(rawData);
+          console.log('[GeminiLive] Received:', JSON.stringify(response).substring(0, 300));
 
           // Handle server error responses
           if (response.error) {
@@ -154,7 +162,7 @@ class GeminiLive {
 
           this._handleMessage(response);
         } catch (err) {
-          console.error('[GeminiLive] Failed to parse message:', err, event.data?.substring?.(0, 200));
+          console.error('[GeminiLive] Failed to parse message:', err);
         }
       };
 
