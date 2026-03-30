@@ -115,25 +115,40 @@
     const apiKey = localStorage.getItem('gemini_api_key');
     if (!apiKey) return;
 
-    try {
-      // Connect to Gemini
-      await gemini.connect(apiKey);
+    micBtn.disabled = true;
+    clearTranscript();
 
-      // Start microphone
+    // Step 1: Start microphone FIRST (requires user gesture context on iOS)
+    addSystemMessage('マイクを起動中...');
+    try {
       await audio.startMic((pcmBuffer) => {
         gemini.sendAudio(pcmBuffer);
       });
-
-      isSessionActive = true;
-      micBtn.classList.add('active');
-      micBtn.querySelector('.mic-label').textContent = '停止';
-      clearTranscript();
-      addSystemMessage('セッションを開始しました。話しかけてください。');
     } catch (err) {
-      console.error('Failed to start session:', err);
-      addSystemMessage(`接続に失敗しました: ${err.message || 'APIキーを確認してください'}`);
-      updateConnectionStatus('disconnected');
+      console.error('Failed to start mic:', err);
+      addSystemMessage(`マイクの起動に失敗しました: ${err.message}`);
+      micBtn.disabled = false;
+      return;
     }
+
+    // Step 2: Connect to Gemini Live API
+    addSystemMessage('Gemini Live APIに接続中...');
+    try {
+      await gemini.connect(apiKey);
+    } catch (err) {
+      console.error('Failed to connect to Gemini:', err);
+      addSystemMessage(`接続に失敗しました: ${err.message || 'APIキーを確認してください'}`);
+      audio.stopMic();
+      updateConnectionStatus('disconnected');
+      micBtn.disabled = false;
+      return;
+    }
+
+    isSessionActive = true;
+    micBtn.disabled = false;
+    micBtn.classList.add('active');
+    micBtn.querySelector('.mic-label').textContent = '停止';
+    addSystemMessage('セッションを開始しました。話しかけてください。');
   }
 
   function stopSession() {
