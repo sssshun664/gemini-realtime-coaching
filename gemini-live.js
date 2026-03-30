@@ -50,7 +50,7 @@ class GeminiLive {
     this._setStatus('connecting');
 
     const MODEL = 'gemini-3.1-flash-live-preview';
-    const WS_URL = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+    const WS_URL = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
 
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -78,13 +78,15 @@ class GeminiLive {
       }
 
       this._ws.onopen = () => {
-        console.log('[GeminiLive] WebSocket connected, sending config...');
+        console.log('[GeminiLive] WebSocket connected, sending setup...');
 
-        // Send config message (raw WebSocket protocol)
-        const configMessage = {
-          config: {
+        // Send setup message (raw WebSocket protocol: BidiGenerateContentSetup)
+        const setupMessage = {
+          setup: {
             model: `models/${MODEL}`,
-            responseModalities: ['AUDIO'],
+            generationConfig: {
+              responseModalities: ['AUDIO']
+            },
             systemInstruction: {
               parts: [{
                 text: SYSTEM_INSTRUCTION
@@ -96,8 +98,8 @@ class GeminiLive {
           }
         };
 
-        this._ws.send(JSON.stringify(configMessage));
-        console.log('[GeminiLive] Config sent, waiting for setupComplete...');
+        this._ws.send(JSON.stringify(setupMessage));
+        console.log('[GeminiLive] Setup sent, waiting for setupComplete...');
       };
 
       this._ws.onmessage = async (event) => {
