@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>AI Fitness Coach</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- API Key Setup Screen -->
+  <div id="setup-screen" class="screen active">
+    <div class="setup-container">
+      <div class="setup-icon">🏋️</div>
+      <h1>AI Fitness Coach</h1>
+      <p class="setup-desc">Gemini Live APIを使ったリアルタイム音声フィットネスコーチング</p>
+      <div class="input-group">
+        <label for="api-key-input">Gemini API Key</label>
+        <input type="password" id="api-key-input" placeholder="AIza...">
+        <small>APIキーはブラウザのlocalStorageにのみ保存されます</small>
+      </div>
+      <button id="start-btn" class="btn-primary">コーチングを開始</button>
+    </div>
+  </div>
+
+  <!-- Main Coaching Screen -->
+  <div id="main-screen" class="screen">
+    <!-- Camera Preview -->
+    <div id="camera-section">
+      <video id="camera-preview" autoplay playsinline muted></video>
+      <div id="rec-indicator" class="hidden">
+        <span class="rec-dot"></span>REC
+      </div>
+    </div>
+
+    <!-- Status Bar -->
+    <div id="status-bar">
+      <div id="exercise-label">種目未設定</div>
+      <div id="connection-status" class="status-disconnected">未接続</div>
+    </div>
+
+    <!-- Function Call Log -->
+    <div id="function-log" class="hidden">
+      <div id="function-log-content"></div>
+    </div>
+
+    <!-- Transcription Area -->
+    <div id="transcript-area">
+      <div id="transcript-content">
+        <p class="transcript-placeholder">音声会話がここに表示されます...</p>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div id="controls">
+      <button id="mic-btn" class="btn-mic" disabled>
+        <span class="mic-icon">🎤</span>
+        <span class="mic-label">接続</span>
+      </button>
+      <button id="settings-btn" class="btn-settings" title="設定">⚙️</button>
+    </div>
+  </div>
+
+  <script src="audio-handler.js"></script>
+  <script src="video-recorder.js"></script>
+  <script src="tools.js"></script>
+  <script src="gemini-live.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
