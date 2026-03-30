@@ -20,6 +20,7 @@ class GeminiLive {
     this._onOutputTranscript = null;// (text) => {}
     this._onToolCall = null;        // (toolCall) => {}
     this._onInterrupted = null;     // () => {}
+    this._onTurnComplete = null;    // () => {}
     this._onStatusChange = null;    // (status) => {}
     this._onError = null;           // (error) => {}
   }
@@ -34,6 +35,7 @@ class GeminiLive {
       case 'outputTranscript': this._onOutputTranscript = callback; break;
       case 'toolCall': this._onToolCall = callback; break;
       case 'interrupted': this._onInterrupted = callback; break;
+      case 'turnComplete': this._onTurnComplete = callback; break;
       case 'status': this._onStatusChange = callback; break;
       case 'error': this._onError = callback; break;
     }
@@ -51,6 +53,8 @@ class GeminiLive {
     const WS_URL = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
 
     return new Promise((resolve, reject) => {
+      let settled = false;
+
       try {
         this._ws = new WebSocket(WS_URL);
       } catch (err) {
@@ -60,13 +64,15 @@ class GeminiLive {
       }
 
       this._ws.onopen = () => {
-        console.log('[GeminiLive] WebSocket connected');
+        console.log('[GeminiLive] WebSocket connected, sending setup...');
 
-        // Send initial configuration
-        const configMessage = {
-          config: {
+        // Send setup message (raw WebSocket protocol)
+        const setupMessage = {
+          setup: {
             model: `models/${MODEL}`,
-            responseModalities: ['AUDIO'],
+            generationConfig: {
+              responseModalities: ['AUDIO']
+            },
             systemInstruction: {
               parts: [{
                 text: `あなたはプロのフィットネスコーチです。ジムでトレーニングしているユーザーに対して、リアルタイムで音声コーチングを行います。
@@ -95,17 +101,27 @@ class GeminiLive {
           }
         };
 
-        this._ws.send(JSON.stringify(configMessage));
-        console.log('[GeminiLive] Config sent');
-        this._isConfigured = true;
-        this._isConnected = true;
-        this._setStatus('connected');
-        resolve();
+        this._ws.send(JSON.stringify(setupMessage));
+        console.log('[GeminiLive] Setup message sent, waiting for setupComplete...');
       };
 
       this._ws.onmessage = (event) => {
         try {
           const response = JSON.parse(event.data);
+
+          // Handle setupComplete — resolve the connect promise here
+          if (response.setupComplete) {
+            console.log('[GeminiLive] Setup complete');
+            this._isConfigured = true;
+            this._isConnected = true;
+            this._setStatus('connected');
+            if (!settled) {
+              settled = true;
+              resolve();
+            }
+            return;
+          }
+
           this._handleMessage(response);
         } catch (err) {
           console.error('[GeminiLive] Failed to parse message:', err);
@@ -119,9 +135,22 @@ class GeminiLive {
 
       this._ws.onclose = (event) => {
         console.log('[GeminiLive] WebSocket closed:', event.code, event.reason);
+        const wasConnected = this._isConnected;
         this._isConnected = false;
         this._isConfigured = false;
         this._setStatus('disconnected');
+
+        // If closed before setupComplete, reject the connect promise
+        if (!settled) {
+          settled = true;
+          const reason = event.reason || `WebSocket closed (code: ${event.code})`;
+          reject(new Error(reason));
+        } else if (wasConnected) {
+          // Unexpected disconnect during active session
+          if (this._onError) {
+            this._onError(new Error(`接続が切断されました (code: ${event.code}, reason: ${event.reason || 'unknown'})`));
+          }
+        }
       };
     });
   }
@@ -130,13 +159,7 @@ class GeminiLive {
    * Handle incoming WebSocket message
    */
   _handleMessage(response) {
-    // Setup complete acknowledgement
-    if (response.setupComplete) {
-      console.log('[GeminiLive] Setup complete');
-      return;
-    }
-
-    // Server content (audio, transcriptions, interruptions)
+    // Server content (audio, transcriptions, interruptions, turnComplete)
     if (response.serverContent) {
       const content = response.serverContent;
 
@@ -167,6 +190,12 @@ class GeminiLive {
       if (content.interrupted === true) {
         console.log('[GeminiLive] Interrupted');
         if (this._onInterrupted) this._onInterrupted();
+      }
+
+      // Turn complete
+      if (content.turnComplete === true) {
+        console.log('[GeminiLive] Turn complete');
+        if (this._onTurnComplete) this._onTurnComplete();
       }
     }
 
