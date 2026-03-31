@@ -1,5 +1,5 @@
 /**
- * VideoRecorder - Manages camera preview and MP4 recording via MediaRecorder API
+ * VideoRecorder - Manages camera preview, camera switching, and MP4 recording
  * Optimized for iPhone Safari
  */
 class VideoRecorder {
@@ -12,30 +12,57 @@ class VideoRecorder {
     this._captureCanvas = null;
     this._captureCtx = null;
     this._frameInterval = null;
+    this._facingMode = 'user'; // Default to front camera for self-view
   }
 
   /**
    * Start camera preview
-   * @param {HTMLVideoElement} videoElement - The video element to display preview
+   * @param {HTMLVideoElement} videoElement
    */
   async startPreview(videoElement) {
     this._previewEl = videoElement;
+    return this._openCamera();
+  }
 
+  /**
+   * Toggle between front and rear camera
+   * @returns {Promise<boolean>} success
+   */
+  async toggleCamera() {
+    this._facingMode = this._facingMode === 'user' ? 'environment' : 'user';
+
+    // Stop current stream
+    if (this._stream) {
+      this._stream.getTracks().forEach(t => t.stop());
+      this._stream = null;
+    }
+
+    const ok = await this._openCamera();
+    console.log(`[VideoRecorder] Camera switched to ${this._facingMode} (${ok ? 'ok' : 'failed'})`);
+    return ok;
+  }
+
+  /**
+   * Open camera with current facingMode
+   */
+  async _openCamera() {
     try {
       this._stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: 'environment', // Rear camera for gym use
+          facingMode: this._facingMode,
           width: { ideal: 1280 },
           height: { ideal: 720 }
         },
-        audio: false // Audio is handled separately
+        audio: false
       });
 
-      this._previewEl.srcObject = this._stream;
-      await this._previewEl.play();
+      if (this._previewEl) {
+        this._previewEl.srcObject = this._stream;
+        await this._previewEl.play();
+      }
       return true;
     } catch (err) {
-      console.warn('Camera access failed:', err);
+      console.warn('[VideoRecorder] Camera access failed:', err);
       return false;
     }
   }
@@ -62,8 +89,6 @@ class VideoRecorder {
 
     this._chunks = [];
 
-    // Determine supported MIME type
-    // iPhone Safari supports mp4, Chrome supports webm
     let mimeType = 'video/mp4';
     if (typeof MediaRecorder.isTypeSupported === 'function') {
       if (MediaRecorder.isTypeSupported('video/mp4;codecs=h264')) {
@@ -80,10 +105,9 @@ class VideoRecorder {
     try {
       this._mediaRecorder = new MediaRecorder(this._stream, {
         mimeType: mimeType,
-        videoBitsPerSecond: 2500000 // 2.5 Mbps
+        videoBitsPerSecond: 2500000
       });
     } catch (e) {
-      // Fallback without mimeType
       this._mediaRecorder = new MediaRecorder(this._stream);
     }
 
@@ -93,14 +117,13 @@ class VideoRecorder {
       }
     };
 
-    this._mediaRecorder.start(1000); // Collect data every 1 second
+    this._mediaRecorder.start(1000);
     this._isRecording = true;
     return true;
   }
 
   /**
    * Stop recording and return the video blob
-   * @returns {Promise<Blob|null>} The recorded video blob
    */
   stopRecording() {
     return new Promise((resolve) => {
@@ -123,8 +146,6 @@ class VideoRecorder {
 
   /**
    * Download the recorded video
-   * @param {Blob} blob - The video blob to download
-   * @param {string} filename - The filename
    */
   downloadVideo(blob, filename) {
     if (!blob) return;
@@ -139,23 +160,19 @@ class VideoRecorder {
   }
 
   /**
-   * Start periodic frame capture and send to callback
-   * @param {Function} onFrame - Called with base64 JPEG string for each frame
-   * @param {number} intervalMs - Capture interval in ms (default: 1000)
+   * Start periodic frame capture
    */
   startFrameCapture(onFrame, intervalMs = 1000) {
     if (!this._previewEl || !this._stream) return;
 
     this.stopFrameCapture();
 
-    // Create canvas for frame capture
     this._captureCanvas = document.createElement('canvas');
     this._captureCtx = this._captureCanvas.getContext('2d');
 
     this._frameInterval = setInterval(() => {
       if (!this._previewEl || this._previewEl.readyState < 2) return;
 
-      // Use smaller resolution to reduce bandwidth
       const maxWidth = 640;
       const vw = this._previewEl.videoWidth;
       const vh = this._previewEl.videoHeight;
@@ -167,7 +184,6 @@ class VideoRecorder {
 
       this._captureCtx.drawImage(this._previewEl, 0, 0, this._captureCanvas.width, this._captureCanvas.height);
 
-      // Convert to JPEG base64 (strip data URL prefix)
       const dataUrl = this._captureCanvas.toDataURL('image/jpeg', 0.6);
       const base64Data = dataUrl.split(',')[1];
       if (base64Data) {
@@ -191,15 +207,8 @@ class VideoRecorder {
     this._captureCtx = null;
   }
 
-  get isRecording() {
-    return this._isRecording;
-  }
-
-  get isCapturingFrames() {
-    return this._frameInterval !== null;
-  }
-
-  get previewElement() {
-    return this._previewEl;
-  }
+  get isRecording() { return this._isRecording; }
+  get isCapturingFrames() { return this._frameInterval !== null; }
+  get previewElement() { return this._previewEl; }
+  get facingMode() { return this._facingMode; }
 }
