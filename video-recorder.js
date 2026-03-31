@@ -198,4 +198,8 @@ class VideoRecorder {
   get isCapturingFrames() {
     return this._frameInterval !== null;
   }
+
+  get previewElement() {
+    return this._previewEl;
+  }
 }

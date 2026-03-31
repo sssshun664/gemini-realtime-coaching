@@ -1,7 +1,7 @@
 /**
  * App - Main controller for the Fitness Coach application
  *
- * Wires together: GeminiLive, AudioHandler, VideoRecorder, ToolHandler
+ * Wires together: GeminiLive, AudioHandler, VideoRecorder, PoseAnalyzer, ToolHandler
  * Manages UI state and user interactions
  */
 (function () {
@@ -27,6 +27,7 @@
   const gemini = new GeminiLive();
   const audio = new AudioHandler();
   const video = new VideoRecorder();
+  const pose = new PoseAnalyzer();
   const tools = new ToolHandler();
 
   // ===== State =====
@@ -46,7 +47,16 @@
 
     // Wire up tool handler
     tools.setVideoRecorder(video);
+    tools.setPoseAnalyzer(pose);
     tools.onStateChange(handleToolStateChange);
+
+    // Wire up real-time pose metrics → send to Gemini Live as text
+    pose.setRealtimeCallback((summary) => {
+      if (gemini.isConnected) {
+        gemini.sendText(summary);
+        console.log('[App] Sent real-time pose data:', summary);
+      }
+    });
 
     // Wire up event listeners
     startBtn.addEventListener('click', handleStart);
@@ -94,7 +104,18 @@
 
     // Start camera preview
     const cameraOk = await video.startPreview(cameraPreview);
-    if (!cameraOk) {
+    if (cameraOk) {
+      // Initialize MediaPipe PoseAnalyzer (async, non-blocking)
+      addSystemMessage('骨格検出エンジンを読み込み中...');
+      pose.init(video.previewElement).then(() => {
+        if (pose.isReady) {
+          addSystemMessage('骨格検出エンジンの初期化が完了しました');
+        } else {
+          addSystemMessage('骨格検出の初期化に失敗しました（フォールバックモードで動作します）');
+          console.warn('PoseAnalyzer load error:', pose.loadError);
+        }
+      });
+    } else {
       addSystemMessage('カメラへのアクセスが拒否されました。録画機能は使用できません。');
     }
 
@@ -157,6 +178,11 @@
   }
 
   function stopSession() {
+    // Stop pose collection if active
+    if (pose.isCollecting) {
+      pose.stopCollecting();
+    }
+
     video.stopFrameCapture();
     gemini.disconnect();
     audio.stopMic();
@@ -261,13 +287,17 @@
 
       case 'recording_started':
         recIndicator.classList.remove('hidden');
-        addSystemMessage('📹 録画を開始しました');
+        if (data.poseTracking) {
+          addSystemMessage('📹 録画 + 姿勢計測を開始しました');
+        } else {
+          addSystemMessage('📹 録画を開始しました（姿勢計測は利用不可）');
+        }
         break;
 
       case 'recording_stopped':
         recIndicator.classList.add('hidden');
-        if (data.sizeMB) {
-          addSystemMessage(`📹 録画停止 (${data.sizeMB}MB)`);
+        if (data.frameCount > 0) {
+          addSystemMessage(`📹 録画停止 — ${data.frameCount}フレームの姿勢データを収集`);
         } else {
           addSystemMessage('📹 録画を停止しました');
         }
@@ -278,7 +308,11 @@
         break;
 
       case 'analysis_complete':
-        addSystemMessage(`📊 解析完了 — スコア: ${data.overall_score}/100`);
+        if (data.overall_score != null) {
+          addSystemMessage(`📊 解析完了 — スコア: ${data.overall_score}/100`);
+        } else {
+          addSystemMessage('📊 解析完了');
+        }
         break;
     }
   }
