@@ -13,6 +13,8 @@
   const apiKeyInput = document.getElementById('api-key-input');
   const startBtn = document.getElementById('start-btn');
   const cameraPreview = document.getElementById('camera-preview');
+  const poseOverlay = document.getElementById('pose-overlay');
+  const cameraToggleBtn = document.getElementById('camera-toggle-btn');
   const recIndicator = document.getElementById('rec-indicator');
   const exerciseLabel = document.getElementById('exercise-label');
   const connectionStatus = document.getElementById('connection-status');
@@ -39,7 +41,6 @@
 
   // ===== Initialization =====
   function init() {
-    // Restore API key from localStorage
     const savedKey = localStorage.getItem('gemini_api_key');
     if (savedKey) {
       apiKeyInput.value = savedKey;
@@ -50,11 +51,13 @@
     tools.setPoseAnalyzer(pose);
     tools.onStateChange(handleToolStateChange);
 
-    // Wire up real-time pose metrics → send to Gemini Live as text
+    // Wire up pose overlay canvas
+    pose.setOverlayCanvas(poseOverlay);
+
+    // Wire up event-driven pose feedback → send to Gemini Live as text
     pose.setRealtimeCallback((summary) => {
       if (gemini.isConnected) {
         gemini.sendText(summary);
-        console.log('[App] Sent real-time pose data:', summary);
       }
     });
 
@@ -62,6 +65,7 @@
     startBtn.addEventListener('click', handleStart);
     micBtn.addEventListener('click', toggleSession);
     settingsBtn.addEventListener('click', handleSettings);
+    cameraToggleBtn.addEventListener('click', handleCameraToggle);
 
     // Wire up Gemini callbacks
     gemini.on('audio', (data) => audio.enqueueAudio(data));
@@ -95,17 +99,14 @@
       return;
     }
 
-    // Save API key
     localStorage.setItem('gemini_api_key', apiKey);
 
-    // Switch to main screen
     setupScreen.classList.remove('active');
     mainScreen.classList.add('active');
 
-    // Start camera preview
+    // Start camera preview (front camera by default)
     const cameraOk = await video.startPreview(cameraPreview);
     if (cameraOk) {
-      // Initialize MediaPipe PoseAnalyzer (async, non-blocking)
       addSystemMessage('骨格検出エンジンを読み込み中...');
       pose.init(video.previewElement).then(() => {
         if (pose.isReady) {
@@ -116,11 +117,20 @@
         }
       });
     } else {
-      addSystemMessage('カメラへのアクセスが拒否されました。録画機能は使用できません。');
+      addSystemMessage('カメラへのアクセスが拒否されました。');
     }
 
-    // Enable mic button
     micBtn.disabled = false;
+  }
+
+  // ===== Camera Toggle =====
+  async function handleCameraToggle() {
+    cameraToggleBtn.disabled = true;
+    const ok = await video.toggleCamera();
+    if (!ok) {
+      addSystemMessage('カメラの切り替えに失敗しました');
+    }
+    cameraToggleBtn.disabled = false;
   }
 
   // ===== Session Management =====
@@ -139,7 +149,6 @@
     micBtn.disabled = true;
     clearTranscript();
 
-    // Step 1: Start microphone FIRST (requires user gesture context on iOS)
     addSystemMessage('マイクを起動中...');
     try {
       await audio.startMic((pcmBuffer) => {
@@ -152,7 +161,6 @@
       return;
     }
 
-    // Step 2: Connect to Gemini Live API
     addSystemMessage('Gemini Live APIに接続中...');
     try {
       await gemini.connect(apiKey);
@@ -165,10 +173,9 @@
       return;
     }
 
-    // Step 3: Start sending camera frames to Gemini
     video.startFrameCapture((base64Jpeg) => {
       gemini.sendVideo(base64Jpeg);
-    }, 1000); // Send 1 frame per second
+    }, 1000);
 
     isSessionActive = true;
     micBtn.disabled = false;
@@ -178,7 +185,6 @@
   }
 
   function stopSession() {
-    // Stop pose collection if active
     if (pose.isCollecting) {
       pose.stopCollecting();
     }
@@ -197,8 +203,6 @@
   // ===== Transcript Management =====
   function handleInputTranscript(text) {
     if (!text || !text.trim()) return;
-
-    // Accumulate input transcript fragments
     if (!inputTranscriptEl) {
       inputTranscriptEl = document.createElement('div');
       inputTranscriptEl.className = 'transcript-entry user';
@@ -211,14 +215,10 @@
 
   function handleOutputTranscript(text) {
     if (!text || !text.trim()) return;
-
-    // Finalize any pending input transcript
     if (inputTranscriptEl) {
       inputTranscriptEl = null;
       currentInputTranscript = '';
     }
-
-    // Accumulate output transcript fragments
     if (!outputTranscriptEl) {
       outputTranscriptEl = document.createElement('div');
       outputTranscriptEl.className = 'transcript-entry ai';
@@ -257,12 +257,9 @@
   // ===== Tool Call Handling =====
   async function handleToolCall(toolCall) {
     if (!toolCall.functionCalls) return;
-
-    // Finalize transcripts before function execution
     finalizeCurrentTranscripts();
 
     const functionResponses = [];
-
     for (const fc of toolCall.functionCalls) {
       addFunctionLogEntry(`⚡ ${fc.name}(${JSON.stringify(fc.args || {})}) を実行中...`);
       addSystemMessage(`🔧 ${fc.name} 関数が呼び出されました`);
@@ -273,7 +270,6 @@
       addFunctionLogEntry(`✅ ${fc.name} → 完了`);
     }
 
-    // Send all responses back to Gemini
     gemini.sendToolResponse(functionResponses);
   }
 
@@ -325,8 +321,6 @@
     entry.textContent = `[${new Date().toLocaleTimeString('ja-JP')}] ${text}`;
     functionLogContent.appendChild(entry);
     functionLog.scrollTop = functionLog.scrollHeight;
-
-    // Keep only last 10 entries
     while (functionLogContent.children.length > 10) {
       functionLogContent.removeChild(functionLogContent.firstChild);
     }

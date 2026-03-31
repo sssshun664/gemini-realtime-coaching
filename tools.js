@@ -335,7 +335,9 @@ class ToolHandler {
         }
 
         // Call Flash Lite for AI evaluation of the metrics
+        console.log('[ToolHandler] Calling Flash Lite with metrics:', JSON.stringify(metrics));
         const evaluation = await this._callFlashLiteAnalysis(exercise, metrics);
+        console.log('[ToolHandler] Flash Lite response:', JSON.stringify(evaluation));
 
         if (evaluation) {
           const result = {
